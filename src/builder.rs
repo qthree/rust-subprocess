@@ -427,7 +427,7 @@ mod exec {
             }
             let mut p = self.popen()?;
             let (maybe_out, maybe_err) =
-                p.communicate_bytes(stdin_data.as_ref().map(|v| &v[..]))?;
+                p.communicate_bytes(stdin_data.as_ref().map(|v| &v[..]), None)?;
             let out = maybe_out.unwrap_or_else(Vec::new);
             let err = maybe_err.unwrap_or_else(Vec::new);
             let status = p.wait()?;
@@ -936,6 +936,7 @@ mod pipeline {
                 &mut last.stdout,
                 &mut Some(err_read),
                 stdin_data.as_ref().map(|v| &v[..]),
+                None,
             )?;
             let out = out.unwrap_or_else(Vec::new);
             let err = err.unwrap();

@@ -553,12 +553,14 @@ impl Popen {
     pub fn communicate_bytes(
         &mut self,
         input_data: Option<&[u8]>,
+        timeout: Option<Duration>,
     ) -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
         communicate::communicate(
             &mut self.stdin,
             &mut self.stdout,
             &mut self.stderr,
             input_data,
+            timeout,
         )
     }
 
@@ -587,7 +589,7 @@ impl Popen {
         &mut self,
         input_data: Option<&str>,
     ) -> Result<(Option<String>, Option<String>)> {
-        let (out, err) = self.communicate_bytes(input_data.map(|s| s.as_bytes()))?;
+        let (out, err) = self.communicate_bytes(input_data.map(|s| s.as_bytes()), None)?;
         let out_str = if let Some(out_vec) = out {
             Some(String::from_utf8(out_vec)?)
         } else {

@@ -134,13 +134,18 @@ mod os {
 
 #[cfg(windows)]
 mod os {
+    use crate::win32;
     use std::fs::File;
     use std::io::{Read, Result as IoResult, Write};
+    use std::time::{Instant, Duration};
 
-    fn comm_read(mut outfile: File) -> IoResult<Vec<u8>> {
+    fn comm_read(mut outfile: File, deadline: Option<Instant>) -> IoResult<Vec<u8>> {
         let mut contents = vec![0u8; 1024];
         let mut pos = 0;
         loop {
+            if let Some(deadline) = deadline {
+                win32::SetCommTimeouts(&outfile, Some(deadline - Instant::now()), None)?;
+            }
             let nread = outfile.read(&mut contents[pos..])?;
             if nread == 0 {
                 break;
@@ -154,8 +159,11 @@ mod os {
         Ok(contents)
     }
 
-    fn comm_write(mut infile: File, mut input_data: &[u8]) -> IoResult<()> {
+    fn comm_write(mut infile: File, mut input_data: &[u8], deadline: Option<Instant>) -> IoResult<()> {
         while input_data.len() != 0 {
+            if let Some(deadline) = deadline {
+                win32::SetCommTimeouts(&infile, None, Some(deadline - Instant::now()))?;
+            }
             let nwritten = infile.write(input_data)?;
             input_data = &input_data[nwritten..];
         }
@@ -193,11 +201,13 @@ mod os {
         stdout: &mut Option<File>,
         stderr: &mut Option<File>,
         input_data: Option<&[u8]>,
+        timeout: Option<Duration>,
     ) -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+        let deadline = timeout.map(|t| Instant::now() + t);
         match (stdin, stdout, stderr) {
             (stdin_ref @ &mut Some(..), &mut None, &mut None) => {
                 let input_data = input_data.expect("must provide input to redirected stdin");
-                comm_write(stdin_ref.take().unwrap(), input_data)?;
+                comm_write(stdin_ref.take().unwrap(), input_data, deadline)?;
                 Ok((None, None))
             }
             (&mut None, stdout_ref @ &mut Some(..), &mut None) => {
@@ -205,7 +215,7 @@ mod os {
                     input_data.is_none(),
                     "cannot provide input to non-redirected stdin"
                 );
-                let out = comm_read(stdout_ref.take().unwrap())?;
+                let out = comm_read(stdout_ref.take().unwrap(), deadline)?;
                 Ok((Some(out), None))
             }
             (&mut None, &mut None, stderr_ref @ &mut Some(..)) => {
@@ -213,16 +223,16 @@ mod os {
                     input_data.is_none(),
                     "cannot provide input to non-redirected stdin"
                 );
-                let err = comm_read(stderr_ref.take().unwrap())?;
+                let err = comm_read(stderr_ref.take().unwrap(), deadline)?;
                 Ok((None, Some(err)))
             }
             (ref mut stdin_ref, ref mut stdout_ref, ref mut stderr_ref) => {
                 let write_in_fn = stdin_ref.take().map(|in_| {
                     let input_data = input_data.expect("must provide input to redirected stdin");
-                    move || comm_write(in_, input_data)
+                    move || comm_write(in_, input_data, deadline)
                 });
-                let read_out_fn = stdout_ref.take().map(|out| || comm_read(out));
-                let read_err_fn = stderr_ref.take().map(|err| || comm_read(err));
+                let read_out_fn = stdout_ref.take().map(|out| || comm_read(out, deadline));
+                let read_err_fn = stderr_ref.take().map(|err| || comm_read(err, deadline));
                 let (write_ret, out, err) = parallel_run(write_in_fn, read_out_fn, read_err_fn);
                 if let Some(write_ret) = write_ret {
                     let () = write_ret?;

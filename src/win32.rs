@@ -10,15 +10,16 @@ use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
 use std::ptr;
 use std::rc::Rc;
+use std::time::Duration;
 
 use winapi;
 use winapi::shared::minwindef::{BOOL, DWORD, LPVOID};
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::minwinbase::{LPSECURITY_ATTRIBUTES, SECURITY_ATTRIBUTES};
 use winapi::um::processthreadsapi::{CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW};
-use winapi::um::winbase::CREATE_UNICODE_ENVIRONMENT;
+use winapi::um::winbase::{CREATE_UNICODE_ENVIRONMENT, COMMTIMEOUTS};
 use winapi::um::winnt::PHANDLE;
-use winapi::um::{handleapi, namedpipeapi, processenv, processthreadsapi, synchapi};
+use winapi::um::{handleapi, namedpipeapi, processenv, processthreadsapi, synchapi, commapi};
 
 pub use winapi::shared::winerror::{ERROR_ACCESS_DENIED, ERROR_BAD_PATHNAME};
 pub const STILL_ACTIVE: u32 = 259;
@@ -213,4 +214,24 @@ pub fn make_standard_stream(which: StandardStream) -> Result<Rc<File>> {
         mem::forget(stream.clone());
         Ok(stream)
     }
+}
+
+pub fn SetCommTimeouts(
+    handle: &File,
+    read_total: Option<Duration>,
+    write_total: Option<Duration>
+) -> Result<()> {
+    let mut timeouts: COMMTIMEOUTS = unsafe { mem::zeroed() };
+    if let Some(read_total) = read_total {
+        let t = (read_total.as_secs() * 1000) as u32 + read_total.subsec_millis();
+        timeouts.ReadTotalTimeoutConstant = t;
+    }
+    if let Some(write_total) = write_total {
+        let t = (write_total.as_secs() * 1000) as u32 + write_total.subsec_millis();
+        timeouts.WriteTotalTimeoutConstant = t;
+    }
+    println!("about to call on {:?} {:?} {:?}", handle.as_raw_handle(), read_total, write_total);
+    let x = check(unsafe { commapi::SetCommTimeouts(handle.as_raw_handle(), &mut timeouts) });
+    println!("result: {:?}", x);
+    x
 }

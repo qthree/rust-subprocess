@@ -167,7 +167,7 @@ fn communicate_input() {
         },
     )
     .unwrap();
-    if let (None, None) = p.communicate_bytes(Some(b"hello world")).unwrap() {
+    if let (None, None) = p.communicate_bytes(Some(b"hello world"), None).unwrap() {
     } else {
         assert!(false);
     }
@@ -189,7 +189,7 @@ fn communicate_output() {
         },
     )
     .unwrap();
-    if let (Some(out), Some(err)) = p.communicate_bytes(None).unwrap() {
+    if let (Some(out), Some(err)) = p.communicate_bytes(None, None).unwrap() {
         assert_eq!(out, b"foo\n");
         assert_eq!(err, b"bar\n");
     } else {
@@ -210,7 +210,7 @@ fn communicate_input_output() {
         },
     )
     .unwrap();
-    if let (Some(out), Some(err)) = p.communicate_bytes(Some(b"hello world")).unwrap() {
+    if let (Some(out), Some(err)) = p.communicate_bytes(Some(b"hello world"), None).unwrap() {
         assert_eq!(out, b"hello world");
         assert_eq!(err, b"foo\n");
     } else {
@@ -232,13 +232,29 @@ fn communicate_input_output_long() {
     )
     .unwrap();
     let input = [65u8; 1_000_000];
-    if let (Some(out), Some(err)) = p.communicate_bytes(Some(&input)).unwrap() {
+    if let (Some(out), Some(err)) = p.communicate_bytes(Some(&input), None).unwrap() {
         assert_eq!(&out[..], &input[..]);
         assert_eq!(&err[..], &[32u8; 100_000][..]);
     } else {
         assert!(false);
     }
     assert!(p.wait().unwrap().success());
+}
+
+#[test]
+fn communicate_timeout() {
+    let mut p = Popen::create(&["sh", "-c", "echo foo; sleep 1"],
+        PopenConfig {
+            stdout: Redirection::Pipe,
+            stderr: Redirection::Pipe,
+            ..Default::default()
+        }).unwrap();
+    let t0 = std::time::Instant::now();
+    let (out, _err) = p.communicate_bytes(None, Some(Duration::from_millis(100))).unwrap();
+    assert_eq!(out, Some("foo\n".as_bytes().to_vec()));
+    println!("elapsed: {:?}", t0.elapsed());
+    assert!(t0.elapsed() < Duration::from_millis(110));
+    p.kill().unwrap();
 }
 
 #[test]
@@ -258,7 +274,7 @@ fn merge_err_to_out_pipe() {
         },
     )
     .unwrap();
-    if let (Some(out), None) = p.communicate_bytes(None).unwrap() {
+    if let (Some(out), None) = p.communicate_bytes(None, None).unwrap() {
         assert_eq!(out, b"foo\nbar\n");
     } else {
         assert!(false);
@@ -277,7 +293,7 @@ fn merge_out_to_err_pipe() {
         },
     )
     .unwrap();
-    if let (None, Some(err)) = p.communicate_bytes(None).unwrap() {
+    if let (None, Some(err)) = p.communicate_bytes(None, None).unwrap() {
         assert_eq!(err, b"foo\nbar\n");
     } else {
         assert!(false);
