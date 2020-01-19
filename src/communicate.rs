@@ -150,36 +150,28 @@ mod os {
         Ok(())
     }
 
-    pub fn comm_threaded(
-        stdin_ref: &mut Option<File>,
-        stdout_ref: &mut Option<File>,
-        stderr_ref: &mut Option<File>,
-        input_data: Option<&[u8]>,
-    ) -> IoResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+    // run three functions in parallel
+    pub fn parallel_run<R1, R2, R3>(
+        f1: Option<impl FnOnce() -> R1 + Send>,
+        f2: Option<impl FnOnce() -> R2 + Send>,
+        f3: Option<impl FnOnce() -> R3 + Send>,
+    ) -> (Option<R1>, Option<R2>, Option<R3>)
+    where
+        R1: Send,
+        R2: Send,
+        R3: Send,
+    {
         crossbeam_utils::thread::scope(move |scope| {
-            let (mut out_thr, mut err_thr) = (None, None);
-            if stdout_ref.is_some() {
-                out_thr = Some(scope.spawn(move |_| comm_read(stdout_ref.take().unwrap())))
-            }
-            if stderr_ref.is_some() {
-                err_thr = Some(scope.spawn(move |_| comm_read(stderr_ref.take().unwrap())))
-            }
-            if stdin_ref.is_some() {
-                let input_data = input_data.expect("must provide input to redirected stdin");
-                comm_write(stdin_ref.take().unwrap(), input_data)?;
-            }
-            Ok((
-                if let Some(out_thr) = out_thr {
-                    Some(out_thr.join().unwrap()?)
-                } else {
-                    None
-                },
-                if let Some(err_thr) = err_thr {
-                    Some(err_thr.join().unwrap()?)
-                } else {
-                    None
-                },
-            ))
+            // start f2 and f3 in the background, if they're specified
+            let ta = f2.map(|f| scope.spawn(move |_| f()));
+            let tb = f3.map(|f| scope.spawn(move |_| f()));
+            // let f1 run in the current thread and f2 and f3 in their
+            // respective threads, and report the results
+            (
+                f1.map(|f| f()),
+                ta.map(|t| t.join().unwrap()),
+                tb.map(|t| t.join().unwrap()),
+            )
         })
         .unwrap()
     }
@@ -213,7 +205,27 @@ mod os {
                 Ok((None, Some(err)))
             }
             (ref mut stdin_ref, ref mut stdout_ref, ref mut stderr_ref) => {
-                comm_threaded(stdin_ref, stdout_ref, stderr_ref, input_data)
+                let write_in_fn = stdin_ref.take().map(|in_| {
+                    let input_data = input_data.expect("must provide input to redirected stdin");
+                    move || comm_write(in_, input_data)
+                });
+                let read_out_fn = stdout_ref.take().map(|out| || comm_read(out));
+                let read_err_fn = stderr_ref.take().map(|err| || comm_read(err));
+                let (write_ret, out, err) = parallel_run(write_in_fn, read_out_fn, read_err_fn);
+                if let Some(write_ret) = write_ret {
+                    let () = write_ret?;
+                }
+                let out = if let Some(out) = out {
+                    Some(out?)
+                } else {
+                    None
+                };
+                let err = if let Some(err) = err {
+                    Some(err?)
+                } else {
+                    None
+                };
+                Ok((out, err))
             }
         }
     }
