@@ -138,15 +138,27 @@ mod os {
     use std::io::{Read, Result as IoResult, Write};
 
     fn comm_read(mut outfile: File) -> IoResult<Vec<u8>> {
-        // take() ensures stdin is closed when done writing, so the
-        // child receives EOF
-        let mut contents = Vec::new();
-        outfile.read_to_end(&mut contents)?;
+        let mut contents = vec![0u8; 1024];
+        let mut pos = 0;
+        loop {
+            let nread = outfile.read(&mut contents[pos..])?;
+            if nread == 0 {
+                break;
+            }
+            pos += nread;
+            if contents.len() - pos < 128 {
+                contents.extend_from_slice(&[0; 4096]);
+            }
+        }
+        contents.drain(pos..contents.len());
         Ok(contents)
     }
 
-    fn comm_write(mut infile: File, input_data: &[u8]) -> IoResult<()> {
-        infile.write_all(input_data)?;
+    fn comm_write(mut infile: File, mut input_data: &[u8]) -> IoResult<()> {
+        while input_data.len() != 0 {
+            let nwritten = infile.write(input_data)?;
+            input_data = &input_data[nwritten..];
+        }
         Ok(())
     }
 
