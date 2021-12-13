@@ -10,21 +10,20 @@ mod os {
     pub const SHELL: [&str; 2] = ["cmd.exe", "/c"];
 }
 
+pub use self::exec::{CaptureData, Exec, NullFile};
 pub use self::os::*;
-pub use self::exec::{Exec, NullFile, CaptureData};
 pub use self::pipeline::Pipeline;
-
 
 mod exec {
     use std::ffi::{OsStr, OsString};
-    use std::io::{Result as IoResult, Read, Write};
+    use std::fmt;
     use std::fs::{File, OpenOptions};
+    use std::io::{Read, Result as IoResult, Write};
     use std::ops::BitOr;
     use std::path::Path;
-    use std::fmt;
 
-    use crate::popen::{PopenConfig, Popen, Redirection, Result as PopenResult};
     use crate::os_common::ExitStatus;
+    use crate::popen::{Popen, PopenConfig, Redirection, Result as PopenResult};
 
     use super::os::*;
     use super::Pipeline;
@@ -187,6 +186,16 @@ mod exec {
             self
         }
 
+        pub fn inherit_handles(mut self, inherit_handles: bool) -> Exec {
+            self.config.inherit_handles = inherit_handles;
+            self
+        }
+
+        pub fn standalone(mut self) -> Exec {
+            self.config.standalone = true;
+            self
+        }
+
         fn ensure_env(&mut self) {
             if self.config.env.is_none() {
                 self.config.env = Some(PopenConfig::current_env());
@@ -211,12 +220,16 @@ mod exec {
         /// the current process.  If this is undesirable, call
         /// `env_clear` first.
         pub fn env<K, V>(mut self, key: K, value: V) -> Exec
-            where K: AsRef<OsStr>,
-                  V: AsRef<OsStr>
+        where
+            K: AsRef<OsStr>,
+            V: AsRef<OsStr>,
         {
             self.ensure_env();
-            self.config.env.as_mut().unwrap().push((key.as_ref().to_owned(),
-                                                    value.as_ref().to_owned()));
+            self.config
+                .env
+                .as_mut()
+                .unwrap()
+                .push((key.as_ref().to_owned(), value.as_ref().to_owned()));
             self
         }
 
@@ -230,15 +243,15 @@ mod exec {
         /// the current process.  If this is undesirable, call
         /// `env_clear` first.
         pub fn env_extend<K, V>(mut self, vars: &[(K, V)]) -> Exec
-            where K: AsRef<OsStr>,
-                  V: AsRef<OsStr>
+        where
+            K: AsRef<OsStr>,
+            V: AsRef<OsStr>,
         {
             self.ensure_env();
             {
                 let envvec = self.config.env.as_mut().unwrap();
                 for &(ref k, ref v) in vars {
-                    envvec.push((k.as_ref().to_owned(),
-                                 v.as_ref().to_owned()));
+                    envvec.push((k.as_ref().to_owned(), v.as_ref().to_owned()));
                 }
             }
             self
@@ -248,11 +261,15 @@ mod exec {
         ///
         /// Other environment variables are inherited by default.
         pub fn env_remove<K>(mut self, key: K) -> Exec
-            where K: AsRef<OsStr>
+        where
+            K: AsRef<OsStr>,
         {
             self.ensure_env();
-            self.config.env.as_mut().unwrap().retain(
-                |&(ref k, ref _v)| k != key.as_ref());
+            self.config
+                .env
+                .as_mut()
+                .unwrap()
+                .retain(|&(ref k, ref _v)| k != key.as_ref());
             self
         }
 
@@ -261,7 +278,8 @@ mod exec {
         /// If unspecified, the current working directory is inherited
         /// from the parent.
         pub fn cwd<P>(mut self, dir: P) -> Exec
-            where P: AsRef<Path>
+        where
+            P: AsRef<Path>,
         {
             self.config.cwd = Some(dir.as_ref().as_os_str().to_owned());
             self
@@ -283,10 +301,10 @@ mod exec {
         /// [`NullFile`]: struct.NullFile.html
         pub fn stdin<T: Into<InputRedirection>>(mut self, stdin: T) -> Exec {
             match (&self.config.stdin, stdin.into()) {
-                (&Redirection::None, InputRedirection::AsRedirection(new))
-                    => self.config.stdin = new,
-                (&Redirection::Pipe,
-                 InputRedirection::AsRedirection(Redirection::Pipe)) => (),
+                (&Redirection::None, InputRedirection::AsRedirection(new)) => {
+                    self.config.stdin = new
+                }
+                (&Redirection::Pipe, InputRedirection::AsRedirection(Redirection::Pipe)) => (),
                 (&Redirection::None, InputRedirection::FeedData(data)) => {
                     self.config.stdin = Redirection::Pipe;
                     self.stdin_data = Some(data);
@@ -423,18 +441,21 @@ mod exec {
         /// use `detached()`.
         pub fn capture(mut self) -> PopenResult<CaptureData> {
             let stdin_data = self.stdin_data.take();
-            if let (&Redirection::None, &Redirection::None)
-                = (&self.config.stdout, &self.config.stderr) {
+            if let (&Redirection::None, &Redirection::None) =
+                (&self.config.stdout, &self.config.stderr)
+            {
                 self = self.stdout(Redirection::Pipe);
             }
             let mut p = self.popen()?;
-            let (maybe_out, maybe_err) = p.communicate_bytes(
-                stdin_data.as_ref().map(|v| &v[..]))?;
+            let (maybe_out, maybe_err) =
+                p.communicate_bytes(stdin_data.as_ref().map(|v| &v[..]))?;
             let out = maybe_out.unwrap_or_else(Vec::new);
             let err = maybe_err.unwrap_or_else(Vec::new);
             let status = p.wait()?;
             Ok(CaptureData {
-                stdout: out, stderr: err, exit_status: status
+                stdout: out,
+                stderr: err,
+                exit_status: status,
             })
         }
 
@@ -491,7 +512,6 @@ mod exec {
             Pipeline::new(self, rhs)
         }
     }
-
 
     impl fmt::Debug for Exec {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -609,8 +629,7 @@ mod exec {
 
     impl From<NullFile> for InputRedirection {
         fn from(_nf: NullFile) -> Self {
-            let null_file = OpenOptions::new().read(true)
-                .open(NULL_DEVICE).unwrap();
+            let null_file = OpenOptions::new().read(true).open(NULL_DEVICE).unwrap();
             InputRedirection::AsRedirection(Redirection::File(null_file))
         }
     }
@@ -650,26 +669,24 @@ mod exec {
 
     impl From<NullFile> for OutputRedirection {
         fn from(_nf: NullFile) -> Self {
-            let null_file = OpenOptions::new().write(true)
-                .open(NULL_DEVICE).unwrap();
+            let null_file = OpenOptions::new().write(true).open(NULL_DEVICE).unwrap();
             OutputRedirection(Redirection::File(null_file))
         }
     }
 }
 
-
 mod pipeline {
-    use std::io::{Result as IoResult, Read, Write};
-    use std::ops::BitOr;
-    use std::fs::File;
     use std::fmt;
+    use std::fs::File;
+    use std::io::{Read, Result as IoResult, Write};
+    use std::ops::BitOr;
     use std::rc::Rc;
 
-    use crate::popen::{Popen, Redirection, Result as PopenResult};
     use crate::communicate;
     use crate::os_common::ExitStatus;
+    use crate::popen::{Popen, Redirection, Result as PopenResult};
 
-    use super::exec::{Exec, InputRedirection, OutputRedirection, CaptureData};
+    use super::exec::{CaptureData, Exec, InputRedirection, OutputRedirection};
 
     /// A builder for multiple [`Popen`] instances connected via
     /// pipes.
@@ -750,8 +767,7 @@ mod pipeline {
         ///    /dev/null.
         ///
         /// [`Redirection`]: struct.Redirection.html
-        pub fn stdin<T: Into<InputRedirection>>(mut self, stdin: T)
-                                                -> Pipeline {
+        pub fn stdin<T: Into<InputRedirection>>(mut self, stdin: T) -> Pipeline {
             match stdin.into() {
                 InputRedirection::AsRedirection(r) => self.stdin = r,
                 InputRedirection::FeedData(data) => {
@@ -773,8 +789,7 @@ mod pipeline {
         ///    /dev/null.
         ///
         /// [`Redirection`]: struct.Redirection.html
-        pub fn stdout<T: Into<OutputRedirection>>(mut self, stdout: T)
-                                                  -> Pipeline {
+        pub fn stdout<T: Into<OutputRedirection>>(mut self, stdout: T) -> Pipeline {
             self.stdout = stdout.into().into_redirection();
             self
         }
@@ -819,7 +834,9 @@ mod pipeline {
 
             if let Some(stderr_to) = self.stderr_file {
                 let stderr_to = Rc::new(stderr_to);
-                self.cmds = self.cmds.into_iter()
+                self.cmds = self
+                    .cmds
+                    .into_iter()
                     .map(|cmd| cmd.stderr(Redirection::RcFile(stderr_to.clone())))
                     .collect();
             }
@@ -914,14 +931,21 @@ mod pipeline {
             let mut last = v.drain(vlen - 1..).next().unwrap();
 
             let (out, err) = communicate::communicate(
-                &mut first.stdin, &mut last.stdout, &mut Some(err_read),
-                stdin_data.as_ref().map(|v| &v[..]))?;
+                &mut first.stdin,
+                &mut last.stdout,
+                &mut Some(err_read),
+                stdin_data.as_ref().map(|v| &v[..]),
+            )?;
             let out = out.unwrap_or_else(Vec::new);
             let err = err.unwrap();
 
             let status = last.wait()?;
 
-            Ok(CaptureData { stdout: out, stderr: err, exit_status: status })
+            Ok(CaptureData {
+                stdout: out,
+                stderr: err,
+                exit_status: status,
+            })
         }
     }
 
@@ -939,9 +963,8 @@ mod pipeline {
                 cmds: self.cmds.clone(),
                 stdin: self.stdin.try_clone().unwrap(),
                 stdout: self.stdout.try_clone().unwrap(),
-                stderr_file: self.stderr_file
-                    .as_ref().map(|f| f.try_clone().unwrap()),
-                stdin_data: self.stdin_data.clone()
+                stderr_file: self.stderr_file.as_ref().map(|f| f.try_clone().unwrap()),
+                stdin_data: self.stdin_data.clone(),
             }
         }
     }
